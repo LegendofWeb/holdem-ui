@@ -1,9 +1,33 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 
 const POSITIONS = ['UTG', 'HJ', 'CO', 'BTN', 'SB', 'BB']
 const ACTIONS = ['FOLD', 'CHECK', 'CALL', 'RAISE', 'ALL-IN']
 const INITIAL_COMMITTED = { UTG: 0, HJ: 0, CO: 0, BTN: 0, SB: 0.5, BB: 1 }
+
+const RANKS = ['2','3','4','5','6','7','8','9','T','J','Q','K','A']
+const SUITS = [
+  { key: 's', symbol: '♠', color: 'black' },
+  { key: 'h', symbol: '♥', color: 'red' },
+  { key: 'c', symbol: '♣', color: 'black' },
+  { key: 'd', symbol: '♦', color: 'red' },
+]
+const ALL_CARDS = SUITS.flatMap(s =>
+  RANKS.map(r => ({
+    code: `${r}${s.key}`,
+    rank: r,
+    suitKey: s.key,
+    suitSymbol: s.symbol,
+    color: s.color,
+  }))
+)
+
+const SUIT_INFO = {
+  s: { symbol: '♠', color: 'black' },
+  h: { symbol: '♥', color: 'red' },
+  c: { symbol: '♣', color: 'black' },
+  d: { symbol: '♦', color: 'red' },
+}
 
 const fmt = (n) => {
   const x = Number(n)
@@ -21,6 +45,27 @@ function normCard(raw) {
   return `${r}${suit}`
 }
 
+// "AsKd7c" -> ["As","Kd","7c"]
+function splitBoardString(s) {
+  const str = (s || '').trim()
+  if (!str) return []
+  // 10 처리(이미 normCard는 10을 잘 넣지만, board concat은 T를 쓰는 편이라 여기선 2글자 기준)
+  // 현재 프로젝트는 rank를 'T'로 쓰므로 2글자씩 끊으면 OK
+  const out = []
+  for (let i = 0; i < str.length; i += 2) out.push(str.slice(i, i + 2))
+  return out.filter(x => x.length === 2)
+}
+
+function cardMeta(code) {
+  const c = (code || '').trim()
+  if (!c || c.length < 2) return null
+  const rank = c[0].toUpperCase()
+  const suit = c[1].toLowerCase()
+  const info = SUIT_INFO[suit]
+  if (!info) return null
+  return { code: `${rank}${suit}`, rank, suit, suitSymbol: info.symbol, color: info.color }
+}
+
 function computeGameState(cards) {
   let street = 'PREFLOP'
   const committed = { ...INITIAL_COMMITTED }
@@ -30,18 +75,29 @@ function computeGameState(cards) {
   let toCall = 0
   let lastRaiseTo = 1
 
+  const folded = { UTG: false, HJ: false, CO: false, BTN: false, SB: false, BB: false }
+  let actedThisStreet = { UTG: false, HJ: false, CO: false, BTN: false, SB: false, BB: false }
+
   const syncStreetBetsToCommittedPreflop = () => {
     streetBets = { ...committed }
     toCall = lastRaiseTo
   }
   syncStreetBetsToCommittedPreflop()
 
+  const autoFoldNoActionPlayers = () => {
+    for (const p of POSITIONS) {
+      if (folded[p]) continue
+      if (!actedThisStreet[p]) folded[p] = true
+    }
+  }
+
   for (const c of cards) {
     if (!c) continue
 
     if (c.type === 'BOARD') {
-      const nextStreet = c.street
-      if (nextStreet) street = nextStreet
+      autoFoldNoActionPlayers()
+      if (c.street) street = c.street
+      actedThisStreet = { UTG: false, HJ: false, CO: false, BTN: false, SB: false, BB: false }
       streetBets = { UTG: 0, HJ: 0, CO: 0, BTN: 0, SB: 0, BB: 0 }
       toCall = 0
       continue
@@ -53,12 +109,18 @@ function computeGameState(cards) {
     const size = Number(c.size)
 
     if (!Object.prototype.hasOwnProperty.call(committed, pos)) continue
+    if (folded[pos]) continue
+
+    actedThisStreet[pos] = true
+
+    if (act === 'FOLD') {
+      folded[pos] = true
+      if (street === 'PREFLOP') syncStreetBetsToCommittedPreflop()
+      continue
+    }
 
     if (street === 'PREFLOP') {
-      if (act === 'FOLD' || act === 'CHECK') {
-        syncStreetBetsToCommittedPreflop()
-        continue
-      }
+      if (act === 'CHECK') { syncStreetBetsToCommittedPreflop(); continue }
 
       if (act === 'CALL') {
         const prev = committed[pos]
@@ -70,10 +132,7 @@ function computeGameState(cards) {
       }
 
       if (act === 'RAISE') {
-        if (!Number.isFinite(size) || size <= 0) {
-          syncStreetBetsToCommittedPreflop()
-          continue
-        }
+        if (!Number.isFinite(size) || size <= 0) { syncStreetBetsToCommittedPreflop(); continue }
         const prev = committed[pos]
         const next = Math.max(prev, size)
         committed[pos] = next
@@ -105,7 +164,7 @@ function computeGameState(cards) {
     }
 
     // POSTFLOP
-    if (act === 'FOLD' || act === 'CHECK') continue
+    if (act === 'CHECK') continue
 
     if (act === 'CALL') {
       const prevStreet = streetBets[pos]
@@ -163,61 +222,185 @@ function computeGameState(cards) {
     toCall = lastRaiseTo
   }
 
-  return { pot, streetBets, toCall, street }
+  return { pot, toCall, street, folded }
 }
 
-// ✅ cards를 “저장패널용 텍스트 블록”으로 변환
-function buildHandLines(cards) {
-  const lines = []
+/**
+ * ✅ 저장패널용: cards(log)를 "구조화된 items"로 변환
+ * item 종류:
+ * - { kind:'setup', heroPos, eff, hero:[c1,c2] }
+ * - { kind:'street', street:'PREFLOP'|'FLOP'|'TURN'|'RIVER' }
+ * - { kind:'board', street, cards:[...] }
+ * - { kind:'action', text }
+ */
+function buildSavedItems(cards, { heroPos, eff, hero1, hero2 }) {
+  const items = []
+  items.push({
+    kind: 'setup',
+    heroPos: heroPos || '-',
+    eff: eff || '-',
+    hero: [hero1, hero2].filter(Boolean),
+  })
+
+  let currentStreet = 'PREFLOP'
+  items.push({ kind: 'street', street: currentStreet })
+
   for (const c of cards) {
-    if (c.type === 'SETUP') {
-      lines.push(c.text)
-      continue
-    }
+    if (!c) continue
+    if (c.type === 'SETUP') continue
+
     if (c.type === 'BOARD') {
-      // BOARD : FLOP/TURN/RIVER는 카드에 이미 text로 들어가 있음
-      lines.push(c.text)
+      // street 넘어가면 구분선 먼저
+      if (c.street && c.street !== currentStreet) {
+        currentStreet = c.street
+        items.push({ kind: 'street', street: currentStreet })
+      }
+      const raw = (c.text || '').split(':')[1] ? (c.text.split(':')[1].trim()) : ''
+      const bc = splitBoardString(raw).map(cardMeta).filter(Boolean)
+      items.push({ kind: 'board', street: currentStreet, cards: bc })
       continue
     }
- if (c.type === 'ACTION') {
-  lines.push(c.text)   // street prefix 제거
-  continue
+
+    if (c.type === 'ACTION') {
+      items.push({ kind: 'action', text: c.text })
+    }
+  }
+  return items
 }
 
+function itemsToClipboardText(title, items) {
+  const lines = [title]
+  for (const it of items) {
+    if (it.kind === 'setup') {
+      const hh = (it.hero || []).join('')
+      lines.push(`Setup · Hero ${it.heroPos} · ${hh || '--'} · ${it.eff}bb`)
+    } else if (it.kind === 'street') {
+      // 구분선(텍스트용)
+      lines.push(`--- ${it.street} ---`)
+    } else if (it.kind === 'board') {
+      const s = (it.cards || []).map(c => c.code).join('')
+      lines.push(`${it.street} : ${s}`)
+    } else if (it.kind === 'action') {
+      lines.push(it.text)
+    }
   }
-  return lines
+  return lines.join('\n')
+}
+
+function CardPill({ code }) {
+  const m = cardMeta(code)
+  if (!m) return <span className="cardPill">--</span>
+  const rankText = m.rank === 'T' ? '10' : m.rank
+  return (
+    <span className={`cardPill ${m.color}`}>
+      <span className="cardPillRank">{rankText}</span>
+      <span className="cardPillSuit">{m.suitSymbol}</span>
+    </span>
+  )
 }
 
 export default function App() {
-  // 1번: 현재 핸드 로그
   const [cards, setCards] = useState([])
+  const [savedHands, setSavedHands] = useState([]) // { id, title, items[] }
 
-  // 7번: 저장된 핸드들
-  const [savedHands, setSavedHands] = useState([]) // { id, title, lines[] }
-
-  // 2~3번
   const [selectedPos, setSelectedPos] = useState(null)
   const [selectedAct, setSelectedAct] = useState(null)
   const [sizeInput, setSizeInput] = useState('')
 
-  // 4번
   const [heroPos, setHeroPos] = useState('')
   const [eff, setEff] = useState('')
-  const [heroHand, setHeroHand] = useState('')
+  const [hero1, setHero1] = useState('')
+  const [hero2, setHero2] = useState('')
 
-  // 5번 Board inputs
   const [flop1, setFlop1] = useState('')
   const [flop2, setFlop2] = useState('')
   const [flop3, setFlop3] = useState('')
   const [turn, setTurn] = useState('')
   const [river, setRiver] = useState('')
 
-  const { pot, streetBets, toCall, street } = useMemo(() => computeGameState(cards), [cards])
+  const [pickTarget, setPickTarget] = useState('')
 
+  const { pot, toCall, street, folded } = useMemo(() => computeGameState(cards), [cards])
   const hasAnyLog = useMemo(() => cards.some(c => c.type !== 'SETUP'), [cards])
   const needsSize = selectedAct === 'RAISE' || selectedAct === 'ALL-IN'
 
-  // Setup upsert (항상 맨 앞)
+  useEffect(() => {
+    if (selectedPos && folded[selectedPos]) {
+      setSelectedPos(null)
+      setSelectedAct(null)
+      setSizeInput('')
+    }
+  }, [folded, selectedPos])
+
+  const visiblePositions = useMemo(() => POSITIONS.filter(p => !folded[p]), [folded])
+
+  const usedCards = useMemo(() => {
+    const vals = [hero1, hero2, flop1, flop2, flop3, turn, river].filter(Boolean)
+    return new Set(vals)
+  }, [hero1, hero2, flop1, flop2, flop3, turn, river])
+
+  const getSlotValue = (t) => {
+    switch (t) {
+      case 'H1': return hero1
+      case 'H2': return hero2
+      case 'F1': return flop1
+      case 'F2': return flop2
+      case 'F3': return flop3
+      case 'T': return turn
+      case 'R': return river
+      default: return ''
+    }
+  }
+  const setSlotValue = (t, v) => {
+    switch (t) {
+      case 'H1': setHero1(v); break
+      case 'H2': setHero2(v); break
+      case 'F1': setFlop1(v); break
+      case 'F2': setFlop2(v); break
+      case 'F3': setFlop3(v); break
+      case 'T': setTurn(v); break
+      case 'R': setRiver(v); break
+      default: break
+    }
+  }
+  const nextTarget = (t) => {
+    const order = ['H1','H2','F1','F2','F3','T','R']
+    const idx = order.indexOf(t)
+    return idx >= 0 && idx < order.length - 1 ? order[idx + 1] : t
+  }
+  const onPickCard = (code) => {
+    if (!pickTarget) return
+    const cur = getSlotValue(pickTarget)
+    if (cur === code) return
+    if (usedCards.has(code)) return
+    setSlotValue(pickTarget, code)
+    setPickTarget(nextTarget(pickTarget))
+  }
+
+  const copyHand = async (hand) => {
+    const text = itemsToClipboardText(hand.title, hand.items)
+
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text)
+      return
+    }
+
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.setAttribute('readonly', '')
+    ta.style.position = 'fixed'
+    ta.style.top = '-9999px'
+    ta.style.left = '-9999px'
+    document.body.appendChild(ta)
+    ta.focus()
+    ta.select()
+    ta.setSelectionRange(0, ta.value.length)
+
+    const ok = document.execCommand('copy')
+    document.body.removeChild(ta)
+    if (!ok) alert('복사에 실패했어. 브라우저가 클립보드를 막았을 수 있어.')
+  }
+
   const upsertSetup = (next) => {
     setCards(prev => {
       const rest = prev.filter(c => c.type !== 'SETUP')
@@ -232,15 +415,28 @@ export default function App() {
     })
   }
 
+  const buildHeroHandText = () => {
+    if (!hero1 && !hero2) return ''
+    return `${hero1 || ''}${hero2 || ''}`
+  }
+
   const onSetup = (field, value) => {
-    const next = { heroPos, eff, heroHand, [field]: value }
+    const next = {
+      heroPos,
+      eff,
+      heroHand: buildHeroHandText(),
+      [field]: value,
+    }
     if (field === 'heroPos') setHeroPos(value)
     if (field === 'eff') setEff(value)
-    if (field === 'heroHand') setHeroHand(value)
     upsertSetup(next)
   }
 
-  // BOARD 선택 = append (스트리트 리셋 트리거)
+  useEffect(() => {
+    upsertSetup({ heroPos, eff, heroHand: buildHeroHandText() })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hero1, hero2])
+
   const addBoard = (st, valueText) => {
     setCards(prev => [
       ...prev,
@@ -248,7 +444,6 @@ export default function App() {
     ])
   }
 
-  // Undo / Clear
   const undo = () => {
     setCards(prev => {
       if (prev.length === 0) return prev
@@ -266,9 +461,14 @@ export default function App() {
     setSizeInput('')
   }
 
-  // Action 추가
+  const nextStreetMarker = () => {
+    if (street !== 'PREFLOP') return
+    addBoard('FLOP', '')
+  }
+
   const addAction = () => {
     if (!selectedPos || !selectedAct) return
+    if (folded[selectedPos]) return
 
     const pos = selectedPos
     const act = selectedAct
@@ -293,6 +493,7 @@ export default function App() {
           text = `${pos} all-in (call ${fmt(toCall)}bb)`
         }
       }
+      if (act === 'FOLD') text = `${pos} folds`
     } else {
       if (act === 'CHECK') text = `${pos} checks`
       if (act === 'CALL') text = `${pos} calls ${fmt(toCall)}bb`
@@ -309,6 +510,7 @@ export default function App() {
           text = `${pos} all-in (call ${fmt(toCall)}bb)`
         }
       }
+      if (act === 'FOLD') text = `${pos} folds`
     }
 
     setCards(prev => [
@@ -320,62 +522,25 @@ export default function App() {
     setSizeInput('')
   }
 
-  // ✅ 핸드종료: 현재 로그를 savedHands에 저장하고, 현재 cards는 Setup만 남기고 초기화
   const endHand = () => {
-    const lines = buildHandLines(cards)
-    if (lines.length === 0) return
+    const items = buildSavedItems(cards, { heroPos, eff, hero1, hero2 })
+    if (!items || items.length === 0) return
 
     setSavedHands(prev => {
       const nextNum = prev.length + 1
       return [
-        {
-          id: `hand-${nextNum}-${Date.now()}`,
-          title: `Hand #${nextNum}`,
-          lines,
-        },
-        ...prev, // 최신이 위로
+        { id: `hand-${nextNum}-${Date.now()}`, title: `Hand #${nextNum}`, items },
+        ...prev,
       ]
     })
 
-    // 복사함수
-const copyHand = async (hand) => {
-  const text = [hand.title, ...hand.lines].join('\n')
-
-  // 1) 최신 API (localhost에서는 보통 OK)
-  if (navigator.clipboard && window.isSecureContext) {
-    await navigator.clipboard.writeText(text)
-    return
-  }
-
-  // 2) fallback: "반드시 textarea 내용만" 복사하도록 더 강하게
-  const ta = document.createElement('textarea')
-  ta.value = text
-  ta.setAttribute('readonly', '')
-  ta.style.position = 'fixed'
-  ta.style.top = '-9999px'
-  ta.style.left = '-9999px'
-  document.body.appendChild(ta)
-  ta.focus()
-  ta.select()
-  ta.setSelectionRange(0, ta.value.length)
-
-  const ok = document.execCommand('copy')
-  document.body.removeChild(ta)
-
-  if (!ok) {
-    alert('복사에 실패했어. 브라우저가 클립보드를 막았을 수 있어.')
-  }
-}
-
-
-    // 현재 핸드는 초기화 (Setup 유지)
     setCards(prev => prev.filter(c => c.type === 'SETUP'))
 
-    // board 입력칸도 초기화(원하면 유지로 바꿀 수 있음)
     setFlop1(''); setFlop2(''); setFlop3('')
     setTurn(''); setRiver('')
+    setHero1(''); setHero2('')
+    setPickTarget('')
 
-    // 액션 입력도 초기화
     setSelectedAct(null)
     setSizeInput('')
     setSelectedPos(null)
@@ -383,13 +548,18 @@ const copyHand = async (hand) => {
 
   return (
     <div className="app">
-      {/* 1번: History strip */}
+      {/* 1) History strip */}
       <div className="panel strip">
         <div className="stripControls">
-          <button className="btn" onClick={undo} disabled={cards.length === 0 || (cards.length === 1 && cards[0].type === 'SETUP')}>되돌리기</button>
-          <button className="btn danger" onClick={clear} disabled={!hasAnyLog}>초기화</button>
-
-          {/* ✅ 핸드종료 버튼 */}
+          <button className="btn" onClick={undo} disabled={cards.length === 0 || (cards.length === 1 && cards[0].type === 'SETUP')}>
+            되돌리기
+          </button>
+          <button className="btn danger" onClick={clear} disabled={!hasAnyLog}>
+            초기화
+          </button>
+          <button className="btn" onClick={nextStreetMarker} disabled={street !== 'PREFLOP'}>
+            다음
+          </button>
           <button className="btnPrimarySmall" onClick={endHand} disabled={cards.length === 0}>
             핸드종료
           </button>
@@ -400,10 +570,7 @@ const copyHand = async (hand) => {
             <div className="empty">No actions yet</div>
           ) : (
             cards.map(c => (
-              <div
-                key={c.id}
-                className={`stripCard ${(c.type === 'SETUP' || c.type === 'BOARD') ? 'setup' : ''}`}
-              >
+              <div key={c.id} className={`stripCard ${(c.type === 'SETUP' || c.type === 'BOARD') ? 'setup' : ''}`}>
                 {c.text}
               </div>
             ))
@@ -411,217 +578,291 @@ const copyHand = async (hand) => {
         </div>
       </div>
 
-      <div className="main">
-        {/* 2번: Table */}
-        <div className="panel tablePanel">
-          <div className="table">
-            {POSITIONS.map(p => (
-              <button
-                key={p}
-                className={`seat ${p.toLowerCase()} ${selectedPos === p ? 'active' : ''}`}
-                onClick={() => setSelectedPos(p)}
-              >
-                {p}{heroPos === p ? ' (Hero)' : ''}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="rightCol">
-          {/* 6번: Pot + betsize */}
-          <div className="panel">
-            <div className="panelHead">
-              <h3>Pot size</h3>
-              <div className="headValue">{fmt(pot)}bb</div>
-            </div>
-
-            <div className="rows">
-              {POSITIONS.map(p => (
-                <div key={p} className="row">
-                  <div className="rowLeft">{p}</div>
-                  <div className="rowRight">{fmt(streetBets[p])}bb</div>
+      {/* ===== Stage ===== */}
+      <div className="stageWrap">
+        <div className="stageCols">
+          {/* Left */}
+          <div className="panel leftCard">
+            <div className="leftSection">
+              <div className="leftTitle">Table</div>
+              <div className="tableShell">
+                <div className="table compact">
+                  {visiblePositions.map(p => (
+                    <button
+                      key={p}
+                      className={`seat ${p.toLowerCase()} ${selectedPos === p ? 'active' : ''}`}
+                      onClick={() => setSelectedPos(p)}
+                    >
+                      {p}{heroPos === p ? ' (Hero)' : ''}
+                    </button>
+                  ))}
                 </div>
-              ))}
+              </div>
             </div>
 
-            <div className="note">
-              {street === 'PREFLOP'
-                ? 'Preflop: betsize = invested(블라인드/raise-to)'
-                : 'Postflop: betsize = this street (BOARD 선택 시 0 리셋)'}
+            <div className="leftDivider" />
+
+            <div className="leftSection">
+              <div className="leftTitle">Pot</div>
+              <div className="potMiniValue">{fmt(pot)}bb</div>
+            </div>
+
+            <div className="leftDivider" />
+
+            <div className="leftSection">
+              <div className="leftTitle">Board</div>
+
+              <div className="boardRow">
+                <div className="boardTag">Flop</div>
+                <button type="button" className={`slotIn ${pickTarget==='F1'?'active':''}`} onClick={() => setPickTarget('F1')}>
+                  {flop1 || '--'}
+                </button>
+                <button type="button" className={`slotIn ${pickTarget==='F2'?'active':''}`} onClick={() => setPickTarget('F2')}>
+                  {flop2 || '--'}
+                </button>
+                <button type="button" className={`slotIn ${pickTarget==='F3'?'active':''}`} onClick={() => setPickTarget('F3')}>
+                  {flop3 || '--'}
+                </button>
+                <button
+                  className="btn boardBtn"
+                  onClick={() => {
+                    const f1 = normCard(flop1), f2 = normCard(flop2), f3 = normCard(flop3)
+                    if (!f1 || !f2 || !f3) return
+                    addBoard('FLOP', `${f1}${f2}${f3}`)
+                  }}
+                >
+                  선택
+                </button>
+              </div>
+
+              <div className="boardRow">
+                <div className="boardTag">Turn</div>
+                <button type="button" className={`slotIn ${pickTarget==='T'?'active':''}`} onClick={() => setPickTarget('T')}>
+                  {turn || '--'}
+                </button>
+                <button
+                  className="btn boardBtn"
+                  onClick={() => {
+                    const t = normCard(turn)
+                    if (!t) return
+                    addBoard('TURN', t)
+                  }}
+                >
+                  선택
+                </button>
+              </div>
+
+              <div className="boardRow">
+                <div className="boardTag">River</div>
+                <button type="button" className={`slotIn ${pickTarget==='R'?'active':''}`} onClick={() => setPickTarget('R')}>
+                  {river || '--'}
+                </button>
+                <button
+                  className="btn boardBtn"
+                  onClick={() => {
+                    const r = normCard(river)
+                    if (!r) return
+                    addBoard('RIVER', r)
+                  }}
+                >
+                  선택
+                </button>
+              </div>
+
+              <div className="note">슬롯 클릭 → 아래 Card Picker에서 카드 선택</div>
             </div>
           </div>
 
-          {/* 3번 + 4번 */}
-          <div className="rowPanels">
-            {/* 3번: Action */}
-            <div className="panel">
+          {/* Right stack */}
+          <div className="rightStack">
+            <div className="rightPair">
+              {/* Action */}
+              <div className="panel rightTall">
+                <div className="panelHead">
+                  <h3>Action</h3>
+                  <div className="headValue">{street}</div>
+                </div>
+
+                <div className="sub">Position: <b>{selectedPos || '—'}</b></div>
+
+                <div className="grid2">
+                  {ACTIONS.map(a => (
+                    <button
+                      key={a}
+                      className={`chip ${selectedAct === a ? 'active' : ''}`}
+                      onClick={() => setSelectedAct(a)}
+                      disabled={!selectedPos || (selectedPos && folded[selectedPos])}
+                    >
+                      {a}
+                    </button>
+                  ))}
+                </div>
+
+                {needsSize && (
+                  <input
+                    className="input"
+                    type="number"
+                    placeholder={street === 'PREFLOP' ? 'Raise to (bb)' : 'Bet size (bb)'}
+                    value={sizeInput}
+                    onChange={e => setSizeInput(e.target.value)}
+                    disabled={!selectedPos || (selectedPos && folded[selectedPos])}
+                  />
+                )}
+
+                <button
+                  className="btnPrimary"
+                  onClick={addAction}
+                  disabled={!selectedPos || !selectedAct || (selectedAct === 'RAISE' && !sizeInput) || (selectedPos && folded[selectedPos])}
+                >
+                  Add Action
+                </button>
+              </div>
+
+              {/* Setup */}
+              <div className="panel rightTall">
+                <h3>Setup</h3>
+
+                <label className="label">
+                  Effective Stack (bb)
+                  <input className="input" type="number" value={eff} onChange={e => onSetup('eff', e.target.value)} />
+                </label>
+
+                <label className="label">
+                  Hero Position
+                  <select className="input" value={heroPos} onChange={e => onSetup('heroPos', e.target.value)}>
+                    <option value="">—</option>
+                    {POSITIONS.map(p => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </label>
+
+                <label className="label">
+                  Hero Hand (slot → pick below)
+                  <div className="slotRow">
+                    <button type="button" className={`slotIn ${pickTarget==='H1'?'active':''}`} onClick={() => setPickTarget('H1')}>
+                      {hero1 || '--'}
+                    </button>
+                    <button type="button" className={`slotIn ${pickTarget==='H2'?'active':''}`} onClick={() => setPickTarget('H2')}>
+                      {hero2 || '--'}
+                    </button>
+                    <button type="button" className="btn" onClick={() => { setHero1(''); setHero2(''); }}>
+                      지우기
+                    </button>
+                  </div>
+                </label>
+
+                <div className="note">중복카드는 선택 불가</div>
+              </div>
+            </div>
+
+            {/* Card Picker */}
+            <div className="panel cardPicker">
               <div className="panelHead">
-                <h3>Action</h3>
-                <div className="headValue">{street}</div>
+                <h3>Card Picker</h3>
+                <div className="headValue">{pickTarget ? `Now: ${pickTarget}` : 'Click a slot'}</div>
               </div>
 
-              <div className="sub">Position: <b>{selectedPos || '—'}</b></div>
-
-              <div className="grid2">
-                {ACTIONS.map(a => (
-                  <button
-                    key={a}
-                    className={`chip ${selectedAct === a ? 'active' : ''}`}
-                    onClick={() => setSelectedAct(a)}
-                    disabled={!selectedPos}
-                  >
-                    {a}
-                  </button>
-                ))}
+              <div className="cardGrid">
+                {ALL_CARDS.map((c) => {
+                  const disabled = usedCards.has(c.code)
+                  return (
+                    <button
+                      key={c.code}
+                      type="button"
+                      className={`cardBtn ${c.color}`}
+                      title={c.code}
+                      disabled={disabled}
+                      onClick={() => onPickCard(c.code)}
+                    >
+                      <span className="cardRank">{c.rank}</span>
+                      <span className="cardSuit">{c.suitSymbol}</span>
+                    </button>
+                  )
+                })}
               </div>
 
-              {needsSize && (
-                <input
-                  className="input"
-                  type="number"
-                  placeholder={street === 'PREFLOP' ? 'Raise to (bb)' : 'Bet size (bb)'}
-                  value={sizeInput}
-                  onChange={e => setSizeInput(e.target.value)}
-                />
-              )}
-
-              <button
-                className="btnPrimary"
-                onClick={addAction}
-                disabled={!selectedPos || !selectedAct || (selectedAct === 'RAISE' && !sizeInput)}
-              >
-                Add Action
-              </button>
-            </div>
-
-            {/* 4번: Setup */}
-            <div className="panel">
-              <h3>Setup</h3>
-
-              <label className="label">
-                Effective Stack (bb)
-                <input className="input" type="number" value={eff} onChange={e => onSetup('eff', e.target.value)} />
-              </label>
-
-              <label className="label">
-                Hero Position
-                <select className="input" value={heroPos} onChange={e => onSetup('heroPos', e.target.value)}>
-                  <option value="">—</option>
-                  {POSITIONS.map(p => <option key={p} value={p}>{p}</option>)}
-                </select>
-              </label>
-
-              <label className="label">
-                Hero Hand
-                <input className="input" type="text" placeholder="AhKh" value={heroHand} onChange={e => onSetup('heroHand', e.target.value)} />
-              </label>
+              <div className="note">슬롯을 먼저 클릭하고, 여기서 카드를 선택</div>
             </div>
           </div>
+        </div>
+      </div>
 
-          {/* 5번: Board + 선택 버튼 */}
-          <div className="panel">
-            <h3>Board</h3>
+      {/* ===== 7) Saved Hands (시각화 업그레이드) ===== */}
+      <div className="panel savedPanel savedFull">
+        <div className="panelHead">
+          <h3>Saved Hands</h3>
+          <div className="headValue">{savedHands.length}</div>
+        </div>
 
-            <div className="boardSec">
-              <div className="boardLabel">Flop</div>
-              <div className="cardRow">
-                <input className="cardIn" value={flop1} onChange={e => setFlop1(e.target.value)} placeholder="As" />
-                <input className="cardIn" value={flop2} onChange={e => setFlop2(e.target.value)} placeholder="Kd" />
-                <input className="cardIn" value={flop3} onChange={e => setFlop3(e.target.value)} placeholder="7c" />
-              </div>
-              <button
-                className="btn"
-                style={{ marginTop: 10, width: '100%' }}
-                onClick={() => {
-                  const f1 = normCard(flop1), f2 = normCard(flop2), f3 = normCard(flop3)
-                  if (!f1 || !f2 || !f3) return
-                  addBoard('FLOP', `${f1}${f2}${f3}`)
-                }}
-              >
-                선택
-              </button>
-            </div>
+        {savedHands.length === 0 ? (
+          <div className="empty">No saved hands yet</div>
+        ) : (
+          <div className="savedList">
+            {savedHands.map((h) => (
+              <div key={h.id} className="savedHand">
+                <div className="savedTitleRow">
+                  <div className="savedTitle">{h.title}</div>
+                  <button type="button" className="copyBtn" onClick={() => copyHand(h)}>공유</button>
+                </div>
 
-            <div className="boardSec">
-              <div className="boardLabel">Turn</div>
-              <div className="cardRow">
-                <input className="cardIn" value={turn} onChange={e => setTurn(e.target.value)} placeholder="Qs" />
-              </div>
-              <button
-                className="btn"
-                style={{ marginTop: 10, width: '100%' }}
-                onClick={() => {
-                  const t = normCard(turn)
-                  if (!t) return
-                  addBoard('TURN', t)
-                }}
-              >
-                선택
-              </button>
-            </div>
+                <div className="savedPretty">
+                  {h.items.map((it, idx) => {
+                    if (it.kind === 'setup') {
+                      return (
+                        <div key={`${h.id}-it-${idx}`} className="savedSetupRow">
+                          <span className="savedBadge">Setup</span>
+                          <span className="savedMeta">Hero {it.heroPos}</span>
+                          <span className="savedMeta">{it.eff}bb</span>
+                          <span className="savedCards">
+                            {(it.hero || []).length === 0
+                              ? <span className="savedDim">--</span>
+                              : (it.hero || []).map((cc) => <CardPill key={`hero-${cc}-${idx}`} code={cc} />)
+                            }
+                          </span>
+                        </div>
+                      )
+                    }
 
-            <div className="boardSec">
-              <div className="boardLabel">River</div>
-              <div className="cardRow">
-                <input className="cardIn" value={river} onChange={e => setRiver(e.target.value)} placeholder="2h" />
-              </div>
-              <button
-                className="btn"
-                style={{ marginTop: 10, width: '100%' }}
-                onClick={() => {
-                  const r = normCard(river)
-                  if (!r) return
-                  addBoard('RIVER', r)
-                }}
-              >
-                선택
-              </button>
-            </div>
+                    if (it.kind === 'street') {
+                      return (
+                        <div key={`${h.id}-it-${idx}`} className="streetDivider">
+                          <div className="streetLine" />
+                          <div className="streetLabel">{it.street}</div>
+                          <div className="streetLine" />
+                        </div>
+                      )
+                    }
 
-            <div className="note">선택 = 새 street 시작(팟 유지, street betsize 0 리셋)</div>
-          </div>
+                    if (it.kind === 'board') {
+                      // FLOP: 3장 / TURN, RIVER: 1장(없으면 빈 표시)
+                      return (
+                        <div key={`${h.id}-it-${idx}`} className="savedBoardRow">
+                          <span className="savedBadge">{it.street}</span>
+                          <span className="savedCards">
+                            {(it.cards || []).length === 0
+                              ? <span className="savedDim">--</span>
+                              : (it.cards || []).map((cc) => <CardPill key={`${h.id}-${cc.code}-${idx}`} code={cc.code} />)
+                            }
+                          </span>
+                        </div>
+                      )
+                    }
 
-          {/* ✅ 7번: 저장패널 */}
-<div className="panel savedPanel">
-  <div className="panelHead">
-    <h3>Saved Hands</h3>
-    <div className="headValue">{savedHands.length}</div>
-  </div>
+                    if (it.kind === 'action') {
+                      return (
+                        <div key={`${h.id}-it-${idx}`} className="savedActionRow">
+                          <span className="savedActionDot" />
+                          <span className="savedActionText">{it.text}</span>
+                        </div>
+                      )
+                    }
 
-  {savedHands.length === 0 ? (
-    <div className="empty">No saved hands yet</div>
-  ) : (
-    <div className="savedList">
-      {savedHands.map((h) => (
-        <div key={h.id} className="savedHand">
-          <div className="savedTitleRow">
-            <div className="savedTitle">{h.title}</div>
-
-            <button
-              type="button"
-              className="copyBtn"
-              onClick={() => copyHand(h)}
-              title="Copy to clipboard"
-            >
-              공유
-            </button>
-          </div>
-
-          <div className="savedLines">
-            {h.lines.map((line, idx) => (
-              <div key={`${h.id}-line-${idx}`} className="savedLine">
-                {line}
+                    return null
+                  })}
+                </div>
               </div>
             ))}
           </div>
-        </div>
-      ))}
-    </div>
-  )}
-</div>
-
-
-        </div>
+        )}
       </div>
     </div>
   )

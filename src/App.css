@@ -1,4 +1,6 @@
-/* 전역: 패널 글씨는 무조건 검정으로 */
+/* =========================
+   Global
+========================= */
 :root {
   --bg: #0f172a;
   --panel: #ffffff;
@@ -11,14 +13,14 @@
 * { box-sizing: border-box; }
 
 .app {
-  height: 100vh;
+  min-height: 100vh;
   background: var(--bg);
   padding: 16px;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--text);
 }
 
-/* 모든 패널 공통: 흰 네모 + 검정 글씨 고정 */
+/* 모든 패널 공통 */
 .panel {
   background: var(--panel);
   color: var(--text);
@@ -27,28 +29,18 @@
   box-shadow: var(--shadow);
 }
 
-/* ===== Layout ===== */
-.main {
-  display: flex;
-  gap: 20px;
-  margin-top: 20px;
-  align-items: flex-start;
-  flex-wrap: wrap;
-}
-
-.rightCol {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-/* ===== 1) History strip ===== */
+/* =========================
+   1) History strip
+========================= */
 .strip {
   display: flex;
   gap: 12px;
   align-items: center;
   padding: 12px;
   min-height: 64px;
+
+  width: 100%;
+  overflow: hidden;   /* ✅ strip이 커져도 아래 레이아웃을 밀지 않음 */
 }
 
 .stripControls {
@@ -65,6 +57,8 @@
   overflow-x: auto;
   flex: 1 1 auto;
   padding-bottom: 2px;
+
+  min-width: 0;      /* ✅ flex overflow 버그 방지(중요) */
 }
 
 .empty {
@@ -72,7 +66,6 @@
   font-weight: 800;
 }
 
-/* 스트립 카드 */
 .stripCard {
   min-width: 220px;
   padding: 12px 14px;
@@ -85,89 +78,15 @@
   border: 1px solid #eef2f7;
 }
 
-/* ✅ Setup 카드 파란색 유지 */
-.stripCard.setup, .stripCard.board { background: #e0f2fe; border-left: 5px solid #0284c7; }
-
-/* ===== 2) Table 패널 ===== */
-.tablePanel {
-  flex: 1 1 520px;
-  display: flex;
-  justify-content: center;
-  align-items: center;
+.stripCard.setup,
+.stripCard.board {
+  background: #e0f2fe;
+  border-left: 5px solid #0284c7;
 }
 
-.table {
-  position: relative;
-  width: 420px;
-  height: 260px;
-  background: radial-gradient(circle at center, #1faa59, #0f7a3a);
-  border-radius: 140px;
-  box-shadow: inset 0 0 0 6px #0b5d2b, 0 8px 20px rgba(0,0,0,0.35);
-}
-
-.seat {
-  position: absolute;
-  padding: 8px 14px;
-  background: #ffffff;
-  color: var(--text);
-  border: none;
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 900;
-  cursor: pointer;
-  box-shadow: 0 3px 8px rgba(0,0,0,0.25);
-}
-.seat.active { background: #fde047; }
-
-.seat.utg { top: -12px; left: 50%; transform: translateX(-50%); }
-.seat.hj  { top: 30px; right: -10px; }
-.seat.co  { bottom: 30px; right: -10px; }
-.seat.btn { bottom: -12px; left: 50%; transform: translateX(-50%); }
-.seat.sb  { bottom: 30px; left: -10px; }
-.seat.bb  { top: 30px; left: -10px; }
-
-/* ===== Panel common bits ===== */
-.panelHead {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  margin-bottom: 10px;
-}
-
-.panelHead h3 { margin: 0; color: var(--text); }
-.headValue { font-weight: 900; color: var(--text); }
-
-.rows {
-  display: grid;
-  gap: 6px;
-}
-
-.row {
-  display: flex;
-  justify-content: space-between;
-  font-weight: 900;
-  font-size: 13px;
-  padding: 6px 8px;
-  border-radius: 10px;
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
-  color: var(--text);
-}
-
-.note {
-  margin-top: 10px;
-  font-size: 12px;
-  color: var(--muted);
-  font-weight: 800;
-}
-
-.rowPanels {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-
-/* ===== Buttons / inputs ===== */
+/* =========================
+   Buttons / inputs
+========================= */
 .btn, .btnPrimary, .chip {
   font-weight: 900;
   color: var(--text);
@@ -198,6 +117,18 @@
   cursor: pointer;
 }
 .btnPrimary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btnPrimarySmall {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: none;
+  background: #16a34a;
+  color: #ffffff;
+  font-weight: 900;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btnPrimarySmall:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .sub { margin: 10px 0 12px; font-weight: 800; color: var(--text); }
 
@@ -241,70 +172,288 @@
   background: #ffffff;
 }
 
-/* ===== 5) Board ===== */
-.boardSec { margin-bottom: 14px; }
-.boardLabel { font-size: 13px; font-weight: 900; margin-bottom: 6px; color: var(--text); }
-.cardRow { display: flex; gap: 8px; }
-.cardIn {
-  width: 48px;
-  padding: 8px;
-  text-align: center;
-  font-weight: 900;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  text-transform: uppercase;
+/* Panel header */
+.panelHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.panelHead h3 { margin: 0; color: var(--text); }
+.headValue { font-weight: 900; color: var(--text); }
+
+.note {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+/* =========================
+   Stage layout (Fixed)
+   - leftCard
+   - rightStack (Action+Setup) + Card Picker
+========================= */
+.stageWrap{
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  margin-top: 20px;
+  overflow-x: auto;
+}
+
+.stageCols{
+  --leftW: 360px;
+  --midW: 420px;
+  --rightW: 360px;
+  --gap: 16px;
+
+  width: calc(var(--leftW) + var(--midW) + var(--rightW) + var(--gap) * 2);
+  display: grid;
+  gap: var(--gap);
+
+  grid-template-columns: var(--leftW) var(--midW) var(--rightW);
+  align-items: start;
+}
+
+/* 오른쪽 영역은 2~3열을 모두 사용 */
+.rightStack{
+  grid-column: 2 / 4;
+  display: grid;
+  gap: var(--gap);
+  align-content: start;
+}
+
+.rightPair{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--gap);
+  align-items: stretch;
+}
+
+.rightTall{
+  min-width: 0;
+}
+
+@media (max-width: 1220px){
+  .stageCols{ margin: 0 16px; }
+}
+
+/* =========================
+   Left Column Card (Table + Pot + Board)
+========================= */
+.leftCard{
+  padding: 14px;
+}
+
+.leftSection{
+  display: grid;
+  gap: 10px;
+}
+
+.leftTitle{
+  font-weight: 1000;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.leftDivider{
+  height: 1px;
+  background: #e5e7eb;
+  margin: 12px 0;
+}
+
+/* table wrapper */
+.tableShell{
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 10px;
+  border-radius: 12px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+}
+
+/* =========================
+   Table (compact)
+========================= */
+.table {
+  position: relative;
+  width: 420px;
+  height: 260px;
+  background: radial-gradient(circle at center, #1faa59, #0f7a3a);
+  border-radius: 140px;
+  box-shadow: inset 0 0 0 6px #0b5d2b, 0 8px 20px rgba(0,0,0,0.35);
+}
+
+.table.compact {
+  width: 210px;
+  height: 130px;
+  border-radius: 70px;
+  box-shadow: inset 0 0 0 4px #0b5d2b, 0 6px 14px rgba(0,0,0,0.35);
+}
+
+/* seat 버튼 */
+.seat {
+  position: absolute;
+  padding: 8px 14px;
   background: #ffffff;
+  color: var(--text);
+  border: none;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+  box-shadow: 0 3px 8px rgba(0,0,0,0.25);
+}
+.seat.active { background: #fde047; }
+
+.table.compact .seat.utg { top: -10px; left: 50%; transform: translateX(-50%); }
+.table.compact .seat.hj  { top: 10px; right: -8px; }
+.table.compact .seat.co  { bottom: 10px; right: -8px; }
+.table.compact .seat.btn { bottom: -10px; left: 50%; transform: translateX(-50%); }
+.table.compact .seat.sb  { bottom: 10px; left: -8px; }
+.table.compact .seat.bb  { top: 10px; left: -8px; }
+
+/* =========================
+   Pot mini value
+========================= */
+.potMiniValue{
+  font-weight: 1000;
+  font-size: 28px;
+  line-height: 1;
   color: var(--text);
 }
 
-/* 핸드종료 버튼(작은 초록 버튼) */
-.btnPrimarySmall {
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: none;
-  background: #16a34a;
-  color: #ffffff;
+/* =========================
+   Board rows
+========================= */
+.boardRow{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.boardTag{
+  width: 50px;
   font-weight: 900;
-  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.boardBtn{
+  padding: 8px 12px;
+  font-weight: 900;
   white-space: nowrap;
 }
-.btnPrimarySmall:disabled {
-  opacity: 0.4;
+
+/* =========================
+   Slots (Hero / Board 선택)
+========================= */
+.slotRow{
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.slotIn{
+  height: 28px;
+  min-width: 52px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #ffffff;
+  font-weight: 1000;
+  cursor: pointer;
+  color: var(--text);
+  text-transform: uppercase;
+}
+
+.slotIn.active{
+  outline: 2px solid #2563eb;
+  border-color: #2563eb;
+}
+
+/* =========================
+   8) Card Picker (SMALL, 4x13)
+========================= */
+.cardPicker{
+  padding: 10px 12px;
+  max-height: 170px;
+  overflow: auto;
+}
+
+.cardPicker .panelHead{
+  margin-bottom: 8px;
+}
+
+.cardGrid{
+  display: grid;
+  grid-template-columns: repeat(13, 1fr);
+  grid-auto-rows: 22px;
+  gap: 4px;
+}
+
+.cardBtn{
+  height: 22px;
+  min-width: 0;
+  padding: 0 4px;
+  border-radius: 6px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  cursor: pointer;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+
+  font-weight: 1000;
+  box-shadow: none;
+  line-height: 1;
+}
+
+.cardBtn:hover{
+  background: #f9fafb;
+  transform: none;
+}
+
+.cardBtn.black{ color: #111827; }
+.cardBtn.red{ color: #dc2626; }
+
+.cardRank, .cardSuit{
+  font-size: 11px;
+  line-height: 1;
+}
+
+.cardBtn:disabled{
+  opacity: 0.25;
   cursor: not-allowed;
 }
 
-/* 7번 저장패널 */
-.savedPanel {
-  width: 560px;          /* 두 패널(260*2 + gap) 정도로 넓게 */
+/* =========================
+   7) Saved Hands (full width)
+========================= */
+.savedFull{
+  width: 100%;
+  margin-top: 16px;
+}
+
+.savedPanel{
   max-width: 100%;
 }
 
-.savedList {
+.savedList{
   display: grid;
   gap: 12px;
 }
 
-.savedHand {
+.savedHand{
   border: 1px solid #e5e7eb;
   background: #f9fafb;
   border-radius: 12px;
   padding: 12px;
-}
-
-.savedTitle {
-  font-weight: 1000;
-  margin-bottom: 8px;
-}
-
-.savedLines {
-  display: grid;
-  gap: 4px;
-}
-
-.savedLine {
-  font-weight: 800;
-  font-size: 13px;
-  color: #111827;
 }
 
 .savedTitleRow{
@@ -313,6 +462,21 @@
   justify-content:space-between;
   gap:10px;
   margin-bottom:8px;
+}
+
+.savedTitle{
+  font-weight: 1000;
+}
+
+.savedLines{
+  display: grid;
+  gap: 4px;
+}
+
+.savedLine{
+  font-weight: 800;
+  font-size: 13px;
+  color: #111827;
 }
 
 .copyBtn{
@@ -328,3 +492,42 @@
 .copyBtn:hover{
   background:#f3f4f6;
 }
+/* =========================
+   HARD FIX: stage가 strip 길이에 따라 밀리지 않게
+   - 기준을 "문서 폭"이 아니라 "뷰포트(화면) 폭"으로 고정
+========================= */
+
+/* 0) 스크롤바 유무로 화면 폭이 흔들리는 것도 막기(레이아웃 시프트 방지) */
+html { overflow-x: hidden; }
+body {
+  margin: 0;
+  width: 100vw;          /* ✅ 문서 폭이 늘어도 화면 폭을 기준으로 고정 */
+  overflow-x: hidden;
+  overflow-y: scroll;    /* ✅ 세로 스크롤바 항상 확보(폭 흔들림 방지) */
+}
+
+/* 1) App도 화면 폭 기준으로 고정 */
+.app {
+  width: 100vw;
+  overflow-x: hidden;
+}
+
+/* 2) stageWrap은 "화면 폭" 안에서만 정렬되게 */
+.stageWrap{
+  width: 100%;
+  justify-content: flex-start; /* ✅ 중앙 기준 흔들림 방지 */
+  overflow-x: auto;            /* ✅ 화면 좁으면 stageWrap만 가로 스크롤 */
+}
+
+/* 3) stageCols: '문서 폭을 늘리는' 고정 width(calc...)를 무력화
+      대신 내용만큼만(inline-grid) 잡고, stageWrap 안에서만 스크롤되게 */
+.stageCols{
+  width: max-content !important;     /* ✅ calc(...) 폭 고정 제거 */
+  min-width: calc(var(--leftW) + var(--midW) + var(--rightW) + var(--gap) * 2);
+  margin: 0 auto;                   /* ✅ stageWrap(뷰포트) 안에서 가운데 */
+}
+
+/* 4) 1번 strip도 문서 폭을 절대 늘리지 않게 */
+.strip { max-width: 100%; overflow: hidden; }
+.stripCards { min-width: 0; }
+.stripCard { flex: 0 0 auto; }
